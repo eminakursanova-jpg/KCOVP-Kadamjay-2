@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>КЦОВП — Учет рабочего времени и геозоны</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet CSS for Interactive Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .pulse-beacon {
+            box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.7);
+            animation: pulse-blue 2s infinite;
+        }
+        @keyframes pulse-blue {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 16px rgba(14, 165, 233, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+        }
+        #hospitalMap { height: 350px; width: 100%; border-radius: 1rem; z-index: 10; }
+        .leaflet-container { font-family: 'Inter', sans-serif !important; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-between">
+
+    <!-- HEADER -->
+    <header class="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 text-white shadow-lg sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div class="flex items-center space-x-3.5">
+                <div class="bg-white/10 p-2.5 rounded-2xl backdrop-blur-md shadow-inner border border-white/20">
+                    <i class="fa-solid fa-hospital text-xl text-teal-300"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-teal-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">КЦОВП</span>
+                        <h1 class="font-extrabold text-base md:text-lg tracking-tight">Кадамжайский ЦОВП</h1>
+                    </div>
+                    <p class="text-xs text-indigo-200">г. Кадамжай, ул. Больничная • Центральная больница</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                <button onclick="switchView('staff')" id="navStaffBtn" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-xl bg-white/20 backdrop-blur-sm transition shadow-sm flex items-center gap-2">
+                    <i class="fa-solid fa-user-nurse"></i> Сотрудник
+                </button>
+                <button onclick="switchView('admin')" id="navAdminBtn" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-xl transition hover:bg-white/20 relative flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved"></i> Администратор
+                    <span id="adminBadge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold shadow">0</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTAINER -->
+    <main class="max-w-7xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
+
+        <!-- STAFF PORTAL VIEW -->
+        <div id="staffView" class="space-y-6 animate-in fade-in duration-300">
+            
+            <!-- Employee Selector & Quick Info -->
+            <div class="bg-indigo-950 text-white rounded-3xl p-5 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 border border-indigo-900">
+                <div class="flex items-center space-x-4 w-full md:w-auto">
+                    <div class="w-12 h-12 rounded-2xl bg-indigo-800 flex items-center justify-center text-teal-400 text-xl font-bold shadow-inner">
+                        <i class="fa-solid fa-id-badge"></i>
+                    </div>
+                    <div class="flex-grow">
+                        <span class="text-xs text-indigo-300 font-medium">Активный профиль (Симуляция сотрудника):</span>
+                        <select id="activeEmployeeSelect" onchange="switchActiveEmployee(this.value)" class="bg-indigo-900 text-white font-bold text-sm rounded-xl px-3 py-2 border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-teal-400 w-full md:w-72 mt-1 shadow-sm">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                </div>
+                <div class="bg-indigo-900/80 px-4 py-2.5 rounded-2xl border border-indigo-800 text-xs text-indigo-200 flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
+                    <div>
+                        <p class="text-indigo-400 font-medium">График работы:</p>
+                        <p class="font-bold text-white">08:30 — 17:00 (Обед 12:00–13:00)</p>
+                    </div>
+                    <div class="text-right pl-3 border-l border-indigo-800">
+                        <p class="text-indigo-400 font-medium">Статус геозоны:</p>
+                        <span id="headerGeoStatus" class="font-bold text-teal-300">Проверка...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Two Column Layout: Actions & Map -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- Left Column: Status & QR Scan Actions -->
+                <div class="lg:col-span-5 space-y-6">
+                    
+                    <!-- Status Card -->
+                    <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 space-y-4">
+                        <div class="flex items-center space-x-4">
+                            <div id="statusIndicatorIcon" class="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl font-bold flex-shrink-0 shadow-sm">
+                                <i class="fa-solid fa-user-clock"></i>
+                            </div>
+                            <div>
+                                <span class="text-xs uppercase tracking-wider text-slate-400 font-bold">Текущее состояние</span>
+                                <h2 id="currentStatusText" class="text-xl font-extrabold text-slate-800">Не отмечен на работе</h2>
+                                <p id="currentStatusSubtext" class="text-xs text-slate-500 mt-0.5">Отсканируйте QR-код для начала смены</p>
+                            </div>
+                        </div>
+
+                        <div class="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
+                            <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                                <span class="text-slate-400 block font-medium">Приход сегодня:</span>
+                                <span id="summaryArrival" class="font-mono font-bold text-slate-700 text-sm">—</span>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                                <span class="text-slate-400 block font-medium">Уход домой:</span>
+                                <span id="summaryDeparture" class="font-mono font-bold text-slate-700 text-sm">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- QR Scanner & Punch Actions -->
+                    <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 text-center space-y-5">
+                        <div class="w-16 h-16 bg-teal-50 text-teal-600 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-sm">
+                            <i class="fa-solid fa-qrcode"></i>
+                        </div>
+                        <div class="space-y-1">
+                            <h3 class="text-lg font-bold text-slate-800">Сканирование QR-кода КЦОВП</h3>
+                            <p class="text-xs text-slate-500">Система проверит ваше георасположение в радиусе 300м от ул. Больничной.</p>
+                        </div>
+
+                        <div class="space-y-2 pt-2">
+                            <button onclick="openQRScannerModal()" class="w-full py-4 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-lg shadow-teal-200 transition flex items-center justify-center gap-2.5 text-sm">
+                                <i class="fa-solid fa-camera-rotate"></i> Открыть сканер QR-кода
+                            </button>
+                            <button onclick="openManualPunchModal()" class="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-2xl transition flex items-center justify-center gap-2 text-xs">
+                                <i class="fa-solid fa-hand-pointer"></i> Быстрая отметка вручную
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right Column: Interactive Map -->
+                <div class="lg:col-span-7 bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 space-y-4 flex flex-col justify-between">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                        <div>
+                            <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                                <i class="fa-solid fa-map-location-dot text-teal-600"></i> Карта геозоны КЦОВП (Кадамжай)
+                            </h3>
+                            <p class="text-xs text-slate-500">Адрес: ул. Больничная • Радиус контроля: 300 метров</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="setSimulationLocation('inside')" id="btnInside" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-100 text-emerald-800 transition shadow-xs">Я в больнице</button>
+                            <button onclick="setSimulationLocation('outside')" id="btnOutside" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-600 transition shadow-xs">Я вне больницы</button>
+                        </div>
+                    </div>
+
+                    <!-- Leaflet Map Container -->
+                    <div id="hospitalMap"></div>
+
+                    <div class="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3.5 text-xs text-indigo-900 flex items-start gap-3">
+                        <i class="fa-solid fa-circle-info text-indigo-600 text-sm mt-0.5"></i>
+                        <div>
+                            <span class="font-bold">Автоматический контроль ухода:</span> Если сотрудник отмечен как находящийся на смене, но геопозиция выходит за пределы зеленой зоны КЦОВП, система мгновенно фиксирует нарушение и отправляет тревожное уведомление администратору.
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- ADMIN VIEW -->
+        <div id="adminView" class="hidden space-y-6 animate-in fade-in duration-300">
+            
+            <!-- Admin Header Stats -->
+            <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h2 class="text-xl font-extrabold text-slate-800">Панель управления КЦОВП</h2>
+                    <p class="text-xs text-slate-500">Мониторинг дисциплины, учет рабочего времени по стандартам (08:30 – 17:00, обед 12:00–13:00)</p>
+                </div>
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <button onclick="openAddEmployeeModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm">
+                        <i class="fa-solid fa-user-plus"></i> Добавить сотрудника
+                    </button>
+                    <button onclick="exportCSVReport()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-2">
+                        <i class="fa-solid fa-file-arrow-down"></i> Экспорт отчета CSV
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-200/80">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Всего в штате</span>
+                    <h3 id="statTotalStaff" class="text-3xl font-extrabold text-slate-800 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-200/80">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">На рабочем месте</span>
+                    <h3 id="statActiveCount" class="text-3xl font-extrabold text-emerald-600 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-200/80">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">На обеде</span>
+                    <h3 id="statLunchCount" class="text-3xl font-extrabold text-amber-500 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-200/80">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Нарушений зоны</span>
+                    <h3 id="statAlertsCount" class="text-3xl font-extrabold text-rose-600 mt-1">0</h3>
+                </div>
+            </div>
+
+            <!-- Admin Alerts Section -->
+            <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <i class="fa-solid fa-triangle-exclamation text-rose-600"></i> Журнал тревог и уходов с рабочего места
+                    </h3>
+                    <button onclick="clearAdminAlerts()" class="text-xs text-slate-400 hover:text-slate-600 font-semibold">Очистить журнал</button>
+                </div>
+                <div id="adminAlertsContainer" class="space-y-3">
+                    <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-center text-xs text-slate-400">
+                        Нет зафиксированных нарушений геозоны
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed Report Table -->
+            <div class="bg-white rounded-3xl shadow-sm border border-slate-200/80 p-6 space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <i class="fa-solid fa-clipboard-user text-indigo-600"></i> Детальный табель учета рабочего времени
+                    </h3>
+                    <div class="text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 font-medium">
+                        Сегодня: <span id="currentDateLabel" class="font-bold text-slate-700"></span>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm text-slate-600">
+                        <thead class="bg-slate-50 text-[11px] uppercase text-slate-400 font-bold tracking-wider">
+                            <tr>
+                                <th class="p-3.5 rounded-l-2xl">Сотрудник / Должность</th>
+                                <th class="p-3.5">Приход</th>
+                                <th class="p-3.5">Уход на обед</th>
+                                <th class="p-3.5">Возврат с обеда</th>
+                                <th class="p-3.5">Уход домой</th>
+                                <th class="p-3.5">Статус</th>
+                                <th class="p-3.5 rounded-r-2xl text-right">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminReportTableBody" class="divide-y divide-slate-100">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- QR SCANNER SIMULATION MODAL -->
+    <div id="qrModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 space-y-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center font-bold">
+                        <i class="fa-solid fa-qrcode"></i>
+                    </div>
+                    <h3 class="font-bold text-lg text-slate-800">Сканер QR-кода КЦОВП</h3>
+                </div>
+                <button onclick="closeQRModal()" class="text-slate-400 hover:text-slate-600 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="bg-teal-50/70 border border-teal-100 p-4 rounded-2xl text-center space-y-1">
+                <p class="text-xs text-teal-700 font-semibold uppercase tracking-wider">Кадамжайский ЦОВП • Проходная</p>
+                <h4 class="font-bold text-slate-800 text-sm">ул. Больничная, Центральная больница</h4>
+                <p class="text-xs text-slate-500 pt-1">Выберите вариант отметки:</p>
+            </div>
+
+            <div class="grid grid-cols-1 gap-2.5">
+                <button onclick="executePunch(1)" class="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-sm transition flex items-center justify-between">
+                    <span class="flex items-center gap-2.5"><i class="fa-solid fa-right-to-bracket text-sm"></i> 1. Я пришел на работу</span>
+                    <span class="bg-emerald-700/60 px-2.5 py-1 rounded-xl font-mono text-[11px]">Норма: 08:30</span>
+                </button>
+                <button onclick="executePunch(2)" class="w-full py-3.5 px-4 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-2xl shadow-sm transition flex items-center justify-between">
+                    <span class="flex items-center gap-2.5"><i class="fa-solid fa-utensils text-sm"></i> 2. Ухожу на обед</span>
+                    <span class="bg-amber-600/60 px-2.5 py-1 rounded-xl font-mono text-[11px]">Обед: 12:00</span>
+                </button>
+                <button onclick="executePunch(3)" class="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-2xl shadow-sm transition flex items-center justify-between">
+                    <span class="flex items-center gap-2.5"><i class="fa-solid fa-arrow-rotate-left text-sm"></i> 3. Вернулся с обеда</span>
+                    <span class="bg-blue-700/60 px-2.5 py-1 rounded-xl font-mono text-[11px]">Конец обеда: 13:00</span>
+                </button>
+                <button onclick="executePunch(4)" class="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-2xl shadow-sm transition flex items-center justify-between">
+                    <span class="flex items-center gap-2.5"><i class="fa-solid fa-right-from-bracket text-sm"></i> 4. Ухожу домой</span>
+                    <span class="bg-rose-700/60 px-2.5 py-1 rounded-xl font-mono text-[11px]">Конец смены: 17:00</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD EMPLOYEE MODAL -->
+    <div id="addEmployeeModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 space-y-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                        <i class="fa-solid fa-user-plus"></i>
+                    </div>
+                    <h3 class="font-bold text-lg text-slate-800">Добавить сотрудника</h3>
+                </div>
+                <button onclick="closeAddEmployeeModal()" class="text-slate-400 hover:text-slate-600 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <form id="addEmployeeForm" onsubmit="handleAddNewEmployeeSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1.5">ФИО сотрудника</label>
+                    <input type="text" id="newEmpName" required placeholder="например, Актан Бакиров" class="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1.5">Должность / Кем работает</label>
+                    <input type="text" id="newEmpPosition" required placeholder="например, Врач-терапевт" class="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="pt-2 flex gap-3">
+                    <button type="button" onclick="closeAddEmployeeModal()" class="w-1/2 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-2xl transition">Отмена</button>
+                    <button type="submit" class="w-1/2 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl shadow-sm transition">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION CONTAINER -->
+    <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col space-y-3 max-w-sm w-full pointer-events-none"></div>
+
+    <!-- FOOTER -->
+    <footer class="bg-white border-t border-slate-200/80 py-4 text-center text-xs text-slate-400">
+        КЦОВП (Кадамжайский Центр Общей Врачебной Практики) • Система контроля геозоны и рабочего времени &copy; 2026
+    </footer>
+
+    <!-- MAIN APP SCRIPT -->
+    <script>
+        // Hospital Coordinates & Geofencing Settings
+        const HOSPITAL_COORDS = { lat: 40.2452, lng: 72.2635 };
+        const GEOFENCE_RADIUS_METERS = 300;
+
+        // Application State & Storage
+        let appState = {
+            currentView: 'staff',
+            activeEmployeeId: 'emp1',
+            simulationLocation: 'inside', // 'inside' or 'outside'
+            adminAlerts: [],
+            employees: [
+                { id: 'emp1', name: 'Иван Петров', position: 'Врач-терапевт', arrival: null, lunchOut: null, lunchBack: null, departure: null, status: 'Не на работе' },
+                { id: 'emp2', name: 'Айгуль Кадырова', position: 'Старшая медсестра', arrival: '08:28', lunchOut: '12:00', lunchBack: '12:55', departure: null, status: 'На работе' },
+                { id: 'emp3', name: 'Бектур Маматов', position: 'Хирург', arrival: '08:32', lunchOut: '12:05', lunchBack: '13:01', departure: '17:02', status: 'Ушел домой' },
+                { id: 'emp4', name: 'Жылдыз Осмонова', position: 'Лаборант', arrival: '08:25', lunchOut: null, lunchBack: null, departure: null, status: 'На обеде' }
+            ]
+        };
+
+        let leafletMap = null;
+        let hospitalMarker = null;
+        let geofenceCircle = null;
+        let employeeMarker = null;
+
+        window.onload = function() {
+            loadFromLocalStorage();
+            initLeafletMap();
+            renderUI();
+            startBackgroundGeofenceMonitor();
+            
+            document.getElementById('currentDateLabel').innerText = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+        };
+
+        function saveToLocalStorage() {
+            localStorage.setItem('kcovp_state', JSON.stringify({
+                employees: appState.employees,
+                adminAlerts: appState.adminAlerts,
+                activeEmployeeId: appState.activeEmployeeId
+            }));
+        }
+
+        function loadFromLocalStorage() {
+            const saved = localStorage.getItem('kcovp_state');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.employees) appState.employees = parsed.employees;
+                    if (parsed.adminAlerts) appState.adminAlerts = parsed.adminAlerts;
+                    if (parsed.activeEmployeeId) appState.activeEmployeeId = parsed.activeEmployeeId;
+                } catch(e) { console.error(e); }
+            }
+        }
+
+        function switchView(viewName) {
+            appState.currentView = viewName;
+            const staffView = document.getElementById('staffView');
+            const adminView = document.getElementById('adminView');
+            const navStaffBtn = document.getElementById('navStaffBtn');
+            const navAdminBtn = document.getElementById('navAdminBtn');
+
+            if (viewName === 'staff') {
+                staffView.classList.remove('hidden');
+                adminView.classList.add('hidden');
+                navStaffBtn.className = "px-4 py-2 text-xs md:text-sm font-semibold rounded-xl bg-white/20 backdrop-blur-sm transition shadow-sm flex items-center gap-2";
+                navAdminBtn.className = "px-4 py-2 text-xs md:text-sm font-semibold rounded-xl transition hover:bg-white/20 relative flex items-center gap-2";
+                setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 200);
+            } else {
+                staffView.classList.add('hidden');
+                adminView.classList.remove('hidden');
+                navStaffBtn.className = "px-4 py-2 text-xs md:text-sm font-semibold rounded-xl transition hover:bg-white/20 flex items-center gap-2";
+                navAdminBtn.className = "px-4 py-2 text-xs md:text-sm font-semibold rounded-xl bg-white/20 backdrop-blur-sm transition shadow-sm relative flex items-center gap-2";
+                renderAdminReport();
+            }
+        }
+
+        // Initialize Leaflet Map
+        function initLeafletMap() {
+            if (leafletMap) return;
+
+            leafletMap = L.map('hospitalMap').setView([HOSPITAL_COORDS.lat, HOSPITAL_COORDS.lng], 16);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(leafletMap);
+
+            // Hospital Marker
+            const hospitalIcon = L.divIcon({
+                className: 'custom-hospital-pin',
+                html: '<div style="background-color: #0d9488; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border: 2px solid white;"><i class="fa-solid fa-hospital"></i></div>',
+                iconSize: [36, 36],
+                iconAnchor: [18, 18]
+            });
+
+            hospitalMarker = L.marker([HOSPITAL_COORDS.lat, HOSPITAL_COORDS.lng], { icon: hospitalIcon }).addTo(leafletMap);
+            hospitalMarker.bindPopup("<b>КЦОВП (Центральная больница)</b><br>г. Кадамжай, ул. Больничная");
+
+            // Geofence Circle (300 meters)
+            geofenceCircle = L.circle([HOSPITAL_COORDS.lat, HOSPITAL_COORDS.lng], {
+                color: '#0d9488',
+                fillColor: '#14b8a6',
+                fillOpacity: 0.15,
+                radius: GEOFENCE_RADIUS_METERS,
+                weight: 2
+            }).addTo(leafletMap);
+
+            updateEmployeeMapPin();
+        }
+
+        function updateEmployeeMapPin() {
+            if (!leafletMap) return;
+
+            // Determine simulated coordinate based on state
+            let coords = [HOSPITAL_COORDS.lat, HOSPITAL_COORDS.lng];
+            if (appState.simulationLocation === 'outside') {
+                // Shift coordinates ~400 meters away (outside 300m radius)
+                coords = [HOSPITAL_COORDS.lat + 0.0035, HOSPITAL_COORDS.lng + 0.0035];
+            } else {
+                // Slight random offset inside hospital
+                coords = [HOSPITAL_COORDS.lat + 0.0004, HOSPITAL_COORDS.lng - 0.0003];
+            }
+
+            const currentEmp = appState.employees.find(e => e.id === appState.activeEmployeeId);
+            const empName = currentEmp ? currentEmp.name : 'Сотрудник';
+
+            const userIcon = L.divIcon({
+                className: 'custom-user-pin',
+                html: `<div style="background-color: ${appState.simulationLocation === 'inside' ? '#059669' : '#e11d48'}; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border: 2px solid white;"><i class="fa-solid fa-user-doctor"></i></div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+
+            if (employeeMarker) {
+                employeeMarker.setLatLng(coords);
+                employeeMarker.setIcon(userIcon);
+                employeeMarker.setPopupContent(`<b>${empName}</b><br>Статус геозоны: ${appState.simulationLocation === 'inside' ? 'Внутри КЦОВП' : 'Вне зоны!'}`);
+            } else {
+                employeeMarker = L.marker(coords, { icon: userIcon }).addTo(leafletMap);
+                employeeMarker.bindPopup(`<b>${empName}</b><br>Статус геозоны: ${appState.simulationLocation === 'inside' ? 'Внутри КЦОВП' : 'Вне зоны!'}`);
+            }
+        }
+
+        function setSimulationLocation(mode) {
+            appState.simulationLocation = mode;
+            const btnInside = document.getElementById('btnInside');
+            const btnOutside = document.getElementById('btnOutside');
+
+            if (mode === 'inside') {
+                btnInside.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-100 text-emerald-800 transition shadow-xs";
+                btnOutside.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-600 transition shadow-xs";
+                showToast("Геолокация: Вы находитесь на территории больницы", "success");
+            } else {
+                btnInside.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-600 transition shadow-xs";
+                btnOutside.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-100 text-rose-800 transition shadow-xs";
+                showToast("Геолокация: Вы покинули территорию больницы", "error");
+            }
+
+            updateEmployeeMapPin();
+            renderUI();
+        }
+
+        function switchActiveEmployee(empId) {
+            appState.activeEmployeeId = empId;
+            saveToLocalStorage();
+            renderUI();
+            updateEmployeeMapPin();
+        }
+
+        function openQRScannerModal() {
+            document.getElementById('qrModal').classList.remove('hidden');
+            document.getElementById('qrModal').classList.add('flex');
+        }
+
+        function openManualPunchModal() {
+            openQRScannerModal();
+        }
+
+        function closeQRModal() {
+            document.getElementById('qrModal').classList.remove('flex');
+            document.getElementById('qrModal').classList.add('hidden');
+        }
+
+        function openAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').classList.remove('hidden');
+            document.getElementById('addEmployeeModal').classList.add('flex');
+        }
+
+        function closeAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').classList.remove('flex');
+            document.getElementById('addEmployeeModal').classList.add('hidden');
+            document.getElementById('addEmployeeForm').reset();
+        }
+
+        function handleAddNewEmployeeSubmit(e) {
+            e.preventDefault();
+            const name = document.getElementById('newEmpName').value.trim();
+            const position = document.getElementById('newEmpPosition').value.trim();
+            if (!name || !position) return;
+
+            const newId = 'emp_' + Date.now();
+            appState.employees.push({
+                id: newId,
+                name: name,
+                position: position,
+                arrival: null,
+                lunchOut: null,
+                lunchBack: null,
+                departure: null,
+                status: 'Не на работе'
+            });
+
+            saveToLocalStorage();
+            closeAddEmployeeModal();
+            renderUI();
+            showToast(`Сотрудник ${name} (${position}) успешно добавлен в штат`, 'success');
+        }
+
+        function deleteEmployee(empId) {
+            const emp = appState.employees.find(e => e.id === empId);
+            if (!emp) return;
+
+            if (confirm(`Удалить сотрудника ${emp.name} из базы КЦОВП?`)) {
+                appState.employees = appState.employees.filter(e => e.id !== empId);
+                if (appState.activeEmployeeId === empId && appState.employees.length > 0) {
+                    appState.activeEmployeeId = appState.employees[0].id;
+                }
+                saveToLocalStorage();
+                renderUI();
+                showToast(`Сотрудник ${emp.name} удален`, 'info');
+            }
+        }
+
+        // Execute punch action (1: Arrival, 2: Lunch Out, 3: Lunch Back, 4: Departure)
+        function executePunch(actionType) {
+            closeQRModal();
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const currentEmp = appState.employees.find(e => e.id === appState.activeEmployeeId);
+
+            if (!currentEmp) return;
+
+            if (actionType === 1) {
+                // Check geofence
+                if (appState.simulationLocation !== 'inside') {
+                    showToast("Ошибка геозоны: Вы не находитесь на территории Центральной больницы Кадамжай!", "error");
+                    return;
+                }
+                currentEmp.arrival = timeStr;
+                currentEmp.status = 'На работе';
+                showToast(`Приход зафиксирован в ${timeStr}. Добро пожаловать, ${currentEmp.name}!`, 'success');
+            } else if (actionType === 2) {
+                currentEmp.lunchOut = timeStr;
+                currentEmp.status = 'На обеде';
+                showToast(`Уход на обед зафиксирован в ${timeStr}`, 'info');
+            } else if (actionType === 3) {
+                currentEmp.lunchBack = timeStr;
+                currentEmp.status = 'На работе';
+                showToast(`Возврат с обеда зафиксирован в ${timeStr}`, 'success');
+            } else if (actionType === 4) {
+                currentEmp.departure = timeStr;
+                currentEmp.status = 'Ушел домой';
+                showToast(`Уход домой зафиксирован в ${timeStr}. Хорошего отдыха!`, 'success');
+            }
+
+            saveToLocalStorage();
+            renderUI();
+        }
+
+        // Background Geofence Monitor
+        function startBackgroundGeofenceMonitor() {
+            setInterval(() => {
+                const currentEmp = appState.employees.find(e => e.id === appState.activeEmployeeId);
+                // If on shift and simulation set to outside
+                if (currentEmp && (currentEmp.status === 'На работе' || currentEmp.status === 'На обеде') && appState.simulationLocation === 'outside') {
+                    currentEmp.status = 'Нарушение зоны';
+                    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    
+                    const alertMsg = `Сотрудник ${currentEmp.name} (${currentEmp.position}) покинул рабочее место (КЦОВП) в ${timeStr}!`;
+                    
+                    // Avoid duplicate alerts for same minute
+                    const recent = appState.adminAlerts[0];
+                    if (!recent || recent.text !== alertMsg) {
+                        appState.adminAlerts.unshift({
+                            text: alertMsg,
+                            time: timeStr,
+                            id: Date.now()
+                        });
+                        saveToLocalStorage();
+                        showToast("Внимание! Зафиксирован уход с рабочего места. Администратор оповещен.", "error");
+                        renderUI();
+                    }
+                }
+            }, 6000);
+        }
+
+        function clearAdminAlerts() {
+            appState.adminAlerts = [];
+            saveToLocalStorage();
+            renderUI();
+            showToast("Журнал тревог очищен", "info");
+        }
+
+        function exportCSVReport() {
+            let csv = '\uFEFFФИО,Должность,Приход,Уход на обед,Возврат с обеда,Уход домой,Статус\n';
+            appState.employees.forEach(e => {
+                csv += `"${e.name}","${e.position}","${e.arrival || ''}","${e.lunchOut || ''}","${e.lunchBack || ''}","${e.departure || ''}","${e.status}"\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Otchet_KCOVP_Kadamjay_${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+            showToast("Отчет КЦОВП успешно экспортирован в CSV", "success");
+        }
+
+        function renderUI() {
+            // Populate select dropdown
+            const selectEl = document.getElementById('activeEmployeeSelect');
+            selectEl.innerHTML = appState.employees.map(e => `
+                <option value="${e.id}" ${e.id === appState.activeEmployeeId ? 'selected' : ''}>${e.name} — ${e.position}</option>
+            `).join('');
+
+            const currentEmp = appState.employees.find(e => e.id === appState.activeEmployeeId);
+            const statusIcon = document.getElementById('statusIndicatorIcon');
+            const statusText = document.getElementById('currentStatusText');
+            const statusSubtext = document.getElementById('currentStatusSubtext');
+            const sumArrival = document.getElementById('summaryArrival');
+            const sumDeparture = document.getElementById('summaryDeparture');
+            const headerGeoStatus = document.getElementById('headerGeoStatus');
+
+            if (currentEmp) {
+                statusText.innerText = `Статус: ${currentEmp.status}`;
+                sumArrival.innerText = currentEmp.arrival || '—';
+                sumDeparture.innerText = currentEmp.departure || '—';
+
+                if (currentEmp.status === 'На работе') {
+                    statusIcon.className = "w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl font-bold flex-shrink-0 shadow-sm pulse-beacon";
+                    statusIcon.innerHTML = `<i class="fa-solid fa-user-check"></i>`;
+                    statusSubtext.innerText = `Смена активна. Вы находитесь на рабочем месте.`;
+                } else if (currentEmp.status === 'На обеде') {
+                    statusIcon.className = "w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl font-bold flex-shrink-0 shadow-sm";
+                    statusIcon.innerHTML = `<i class="fa-solid fa-utensils"></i>`;
+                    statusSubtext.innerText = `Сотрудник находится на обеденном перерыве.`;
+                } else if (currentEmp.status === 'Нарушение зоны') {
+                    statusIcon.className = "w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center text-2xl font-bold flex-shrink-0 shadow-sm";
+                    statusIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i>`;
+                    statusSubtext.innerText = `Внимание! Зафиксирован выход за пределы геозоны больницы.`;
+                } else {
+                    statusIcon.className = "w-16 h-16 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-2xl font-bold flex-shrink-0 shadow-sm";
+                    statusIcon.innerHTML = `<i class="fa-solid fa-user-clock"></i>`;
+                    statusSubtext.innerText = `Отсканируйте QR-код на проходной для начала работы.`;
+                }
+            }
+
+            if (appState.simulationLocation === 'inside') {
+                headerGeoStatus.innerText = "Внутри геозоны КЦОВП";
+                headerGeoStatus.className = "font-bold text-teal-300";
+            } else {
+                headerGeoStatus.innerText = "Вне зоны больницы!";
+                headerGeoStatus.className = "font-bold text-rose-400";
+            }
+
+            renderAdminReport();
+        }
+
+        function renderAdminReport() {
+            const activeCount = appState.employees.filter(e => e.status === 'На работе').length;
+            const lunchCount = appState.employees.filter(e => e.status === 'На обеде').length;
+
+            document.getElementById('statTotalStaff').innerText = appState.employees.length;
+            document.getElementById('statActiveCount').innerText = activeCount;
+            document.getElementById('statLunchCount').innerText = lunchCount;
+            document.getElementById('statAlertsCount').innerText = appState.adminAlerts.length;
+
+            const adminBadge = document.getElementById('adminBadge');
+            if (appState.adminAlerts.length > 0) {
+                adminBadge.innerText = appState.adminAlerts.length;
+                adminBadge.classList.remove('hidden');
+            } else {
+                adminBadge.classList.add('hidden');
+            }
+
+            // Alerts container
+            const alertsCont = document.getElementById('adminAlertsContainer');
+            if (appState.adminAlerts.length === 0) {
+                alertsCont.innerHTML = `<div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-center text-xs text-slate-400">Нет зафиксированных нарушений геозоны</div>`;
+            } else {
+                alertsCont.innerHTML = appState.adminAlerts.map(alert => `
+                    <div class="p-4 rounded-2xl bg-rose-50 border border-rose-100 flex items-start space-x-3 text-xs">
+                        <div class="text-rose-600 mt-0.5"><i class="fa-solid fa-triangle-exclamation text-sm"></i></div>
+                        <div class="flex-grow">
+                            <p class="font-bold text-rose-900">${alert.text}</p>
+                            <span class="text-[11px] text-rose-500">${alert.time}</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Report Table
+            const tbody = document.getElementById('adminReportTableBody');
+            tbody.innerHTML = appState.employees.map(emp => {
+                let badgeClass = 'bg-slate-100 text-slate-700';
+                if (emp.status === 'На работе') badgeClass = 'bg-emerald-50 text-emerald-700 font-bold';
+                if (emp.status === 'На обеде') badgeClass = 'bg-amber-50 text-amber-700 font-bold';
+                if (emp.status === 'Ушел домой') badgeClass = 'bg-blue-50 text-blue-700 font-medium';
+                if (emp.status === 'Нарушение зоны') badgeClass = 'bg-rose-50 text-rose-700 font-extrabold animate-pulse';
+
+                return `
+                    <tr class="hover:bg-slate-50/60 transition">
+                        <td class="p-3.5">
+                            <p class="font-bold text-slate-800">${emp.name}</p>
+                            <p class="text-xs text-slate-400">${emp.position}</p>
+                        </td>
+                        <td class="p-3.5 font-mono text-xs">${emp.arrival || '<span class="text-slate-300">—</span>'}</td>
+                        <td class="p-3.5 font-mono text-xs">${emp.lunchOut || '<span class="text-slate-300">—</span>'}</td>
+                        <td class="p-3.5 font-mono text-xs">${emp.lunchBack || '<span class="text-slate-300">—</span>'}</td>
+                        <td class="p-3.5 font-mono text-xs">${emp.departure || '<span class="text-slate-300">—</span>'}</td>
+                        <td class="p-3.5">
+                            <span class="px-2.5 py-1 rounded-xl text-xs ${badgeClass}">${emp.status}</span>
+                        </td>
+                        <td class="p-3.5 text-right">
+                            <button onclick="deleteEmployee('${emp.id}')" class="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 transition" title="Удалить сотрудника">
+                                <i class="fa-solid fa-trash-can text-xs"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            
+            let bgClass = 'bg-slate-900 text-white';
+            let icon = 'fa-circle-info';
+            if (type === 'success') {
+                bgClass = 'bg-emerald-600 text-white';
+                icon = 'fa-circle-check';
+            } else if (type === 'error') {
+                bgClass = 'bg-rose-600 text-white';
+                icon = 'fa-circle-exclamation';
+            }
+
+            toast.className = `${bgClass} p-4 rounded-2xl shadow-xl pointer-events-auto flex items-center space-x-3 text-xs font-semibold animate-in fade-in slide-in-from-bottom-3 duration-200`;
+            toast.innerHTML = `<i class="fa-solid ${icon} text-base"></i><span>${message}</span>`;
+            
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => toast.remove(), 350);
+            }, 3500);
+        }
+    </script>
+</body>
+</html>
